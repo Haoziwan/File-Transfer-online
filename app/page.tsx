@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { P2PFileTransfer, ConnectionStatus, TransferProgress, formatBytes, formatSpeed } from '@/lib/p2p';
 import QRCode from 'qrcode';
-import { Upload, Share2, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check } from 'lucide-react';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -13,6 +13,8 @@ export default function Home() {
   const [progress, setProgress] = useState<TransferProgress | null>(null);
   const [error, setError] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const p2pRef = useRef<P2PFileTransfer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -25,6 +27,18 @@ export default function Home() {
       }
     };
   }, []);
+
+  // Toast auto-hide
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+  };
 
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
@@ -73,11 +87,15 @@ export default function Home() {
             setTimeout(() => {
               p2pRef.current?.sendFile(selectedFile).catch(err => {
                 setError('Failed to send file: ' + err.message);
+                showToast('Failed to send file', 'error');
               });
             }, 500);
           }
         },
-        (errorMsg) => setError(errorMsg)
+        (errorMsg) => {
+          setError(errorMsg);
+          showToast(errorMsg, 'error');
+        }
       );
 
       setRoomId(id);
@@ -100,13 +118,54 @@ export default function Home() {
     } catch (err: any) {
       setError('Failed to initialize: ' + err.message);
       setStatus('error');
+      showToast('Failed to initialize connection', 'error');
     }
   };
 
-  const copyShareLink = () => {
+  const copyShareLink = async () => {
     const shareUrl = `${window.location.origin}/receive/${roomId}`;
-    navigator.clipboard.writeText(shareUrl);
-    alert('Link copied to clipboard!');
+
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(shareUrl);
+        setCopied(true);
+        showToast('Link copied to clipboard!');
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        // Fallback for non-HTTPS or older browsers
+        const textArea = document.createElement('textarea');
+        textArea.value = shareUrl;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+          document.execCommand('copy');
+          setCopied(true);
+          showToast('Link copied to clipboard!');
+          setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+          showToast('Failed to copy link', 'error');
+        }
+        document.body.removeChild(textArea);
+      }
+    } catch (err) {
+      showToast('Failed to copy link', 'error');
+    }
+  };
+
+  const resetTransfer = () => {
+    setFile(null);
+    setRoomId('');
+    setQrCodeUrl('');
+    setStatus('idle');
+    setProgress(null);
+    setError('');
+    if (p2pRef.current) {
+      p2pRef.current.destroy();
+      p2pRef.current = null;
+    }
   };
 
   const renderStatus = () => {
