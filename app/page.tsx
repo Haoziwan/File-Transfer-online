@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { P2PFileTransfer, ConnectionStatus, TransferProgress, formatBytes, formatSpeed } from '@/lib/p2p';
+import { P2PFileTransfer, ConnectionStatus, TransferProgress, ClientInfo, formatBytes, formatSpeed } from '@/lib/p2p';
 import QRCode from 'qrcode';
-import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check } from 'lucide-react';
+import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check, Users } from 'lucide-react';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -11,6 +11,8 @@ export default function Home() {
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [status, setStatus] = useState<ConnectionStatus>('idle');
   const [progress, setProgress] = useState<TransferProgress | null>(null);
+  const [clientProgress, setClientProgress] = useState<Map<string, TransferProgress>>(new Map());
+  const [connectedClients, setConnectedClients] = useState<ClientInfo[]>([]);
   const [error, setError] = useState<string>('');
   const [isDragging, setIsDragging] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -45,6 +47,8 @@ export default function Home() {
     setError('');
     setStatus('idle');
     setProgress(null);
+    setClientProgress(new Map());
+    setConnectedClients([]);
     initializeSender(selectedFile);
   };
 
@@ -83,18 +87,30 @@ export default function Home() {
         (newStatus) => {
           setStatus(newStatus);
           if (newStatus === 'connected') {
-            // Automatically send file when receiver connects
-            setTimeout(() => {
-              p2pRef.current?.sendFile(selectedFile).catch(err => {
-                setError('Failed to send file: ' + err.message);
-                showToast('Failed to send file', 'error');
-              });
-            }, 500);
+            // Update connected clients list
+            updateConnectedClients();
           }
         },
         (errorMsg) => {
           setError(errorMsg);
           showToast(errorMsg, 'error');
+        },
+        (clientId) => {
+          // New client connected
+          console.log('Client connected:', clientId);
+          updateConnectedClients();
+          
+          // Automatically start transfer if we have a file
+          if (selectedFile) {
+            setTimeout(() => {
+              sendFileToClients(selectedFile);
+            }, 500); // Small delay to ensure connection is fully established
+          }
+        },
+        (clientId) => {
+          // Client disconnected
+          console.log('Client disconnected:', clientId);
+          updateConnectedClients();
         }
       );
 
@@ -112,13 +128,58 @@ export default function Home() {
       });
       setQrCodeUrl(qrUrl);
 
-      // Set progress callback after initialization
-      p2pRef.current['onProgressChange'] = setProgress;
-
     } catch (err: any) {
       setError('Failed to initialize: ' + err.message);
       setStatus('error');
       showToast('Failed to initialize connection', 'error');
+    }
+  };
+
+  const updateConnectedClients = () => {
+    if (p2pRef.current) {
+      const clients = p2pRef.current.getConnectedClients();
+      setConnectedClients(clients);
+      
+      // Update progress map
+      const newProgressMap = new Map<string, TransferProgress>();
+      clients.forEach(client => {
+        newProgressMap.set(client.id, client.progress);
+      });
+      setClientProgress(newProgressMap);
+    }
+  };
+
+  const sendFileToClients = async (fileToSend: File) => {
+    if (!p2pRef.current || !fileToSend) return;
+    
+    try {
+      // Set up progress handler
+      p2pRef.current['onProgressChange'] = (clientId, progress) => {
+        setClientProgress(prev => {
+          const newMap = new Map(prev);
+          newMap.set(clientId, progress);
+          return newMap;
+        });
+        
+        // Update overall progress (average of all clients)
+        const allProgress = Array.from(clientProgress.values());
+        if (allProgress.length > 0) {
+          const totalPercentage = allProgress.reduce((sum, p) => sum + p.percentage, 0);
+          const avgPercentage = totalPercentage / allProgress.length;
+          
+          setProgress({
+            transferred: Math.max(...allProgress.map(p => p.transferred)),
+            total: allProgress[0]?.total || 0,
+            percentage: avgPercentage,
+            speed: allProgress.reduce((sum, p) => sum + p.speed, 0)
+          });
+        }
+      };
+      
+      await p2pRef.current.sendFile(fileToSend);
+    } catch (err: any) {
+      setError('Failed to send file: ' + err.message);
+      showToast('Failed to send file', 'error');
     }
   };
 
@@ -161,6 +222,8 @@ export default function Home() {
     setQrCodeUrl('');
     setStatus('idle');
     setProgress(null);
+    setClientProgress(new Map());
+    setConnectedClients([]);
     setError('');
     if (p2pRef.current) {
       p2pRef.current.destroy();
@@ -174,7 +237,7 @@ export default function Home() {
         return (
           <div className="flex items-center gap-2 text-blue-400">
             <div className="w-2 h-2 bg-blue-400 rounded-full pulse"></div>
-            <span>Waiting for receiver...</span>
+            <span>Waiting for receivers... ({connectedClients.length} connected)</span>
           </div>
         );
       case 'connecting':
@@ -188,21 +251,25 @@ export default function Home() {
         return (
           <div className="flex items-center gap-2 text-green-400">
             <CheckCircle className="w-4 h-4" />
-            <span>Connected! Preparing to send...</span>
+            <span>
+              {connectedClients.length > 0 
+                ? `${connectedClients.length} client${connectedClients.length > 1 ? 's' : ''} connected` 
+                : 'Connected! Waiting for receivers...'}
+            </span>
           </div>
         );
       case 'transferring':
         return (
           <div className="flex items-center gap-2 text-purple-400">
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Transferring file...</span>
+            <span>Sending file to {connectedClients.length} client{connectedClients.length > 1 ? 's' : ''}...</span>
           </div>
         );
       case 'completed':
         return (
           <div className="flex items-center gap-2 text-green-400">
             <CheckCircle className="w-4 h-4" />
-            <span>Transfer completed!</span>
+            <span>Transfer completed to all clients!</span>
           </div>
         );
       case 'error':
@@ -254,7 +321,7 @@ export default function Home() {
                     Drop your file here or click to browse
                   </p>
                   <p className="text-gray-400">
-                    Your file stays on your device and transfers directly to the receiver
+                    Your file stays on your device and transfers directly to the receivers
                   </p>
                 </div>
               </div>
@@ -276,6 +343,8 @@ export default function Home() {
                       setQrCodeUrl('');
                       setStatus('idle');
                       setProgress(null);
+                      setClientProgress(new Map());
+                      setConnectedClients([]);
                       p2pRef.current?.destroy();
                     }}
                     className="btn-secondary px-4 py-2"
@@ -290,11 +359,33 @@ export default function Home() {
                 {renderStatus()}
               </div>
 
+              {/* Connected Clients */}
+              {connectedClients.length > 0 && (
+                <div className="glass rounded-xl p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Users className="w-5 h-5 text-blue-400" />
+                    <h3 className="font-semibold">Connected Receivers ({connectedClients.length})</h3>
+                  </div>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {connectedClients.map(client => (
+                      <div key={client.id} className="flex items-center justify-between text-sm">
+                        <span className="font-mono text-gray-300 truncate mr-2">#{client.id.substring(0, 8)}</span>
+                        {clientProgress.has(client.id) && (
+                          <span className="text-gray-400 whitespace-nowrap">
+                            {clientProgress.get(client.id)?.percentage.toFixed(1)}%
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Progress */}
               {progress && (
                 <div className="glass rounded-xl p-4 space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span>Progress</span>
+                    <span>Overall Progress</span>
                     <span className="font-semibold">{progress.percentage.toFixed(1)}%</span>
                   </div>
                   <div className="progress-bar">
@@ -340,6 +431,16 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
+
+                  {/* Auto-transfer notification */}
+                  {connectedClients.length > 0 && status !== 'transferring' && status !== 'completed' && (
+                    <div className="glass rounded-xl p-4 bg-blue-500/10 border border-blue-500/50">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                        <span className="text-blue-400">File transfer will start automatically when clients connect</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -355,7 +456,10 @@ export default function Home() {
                 <div className="bg-green-500/10 border border-green-500/50 rounded-xl p-4 text-center">
                   <CheckCircle className="w-8 h-8 text-green-400 mx-auto mb-2" />
                   <h3 className="text-lg font-semibold">Transfer Complete!</h3>
-                  <p className="text-gray-400 text-sm">Your file has been successfully sent. QR code is still active for more transfers.</p>
+                  <p className="text-gray-400 text-sm">
+                    Your file has been successfully sent to all connected clients. 
+                    QR code is still active for more transfers.
+                  </p>
                 </div>
               )}
             </div>

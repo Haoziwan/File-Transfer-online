@@ -17,6 +17,13 @@ export interface TransferProgress {
     speed: number; // bytes per second
 }
 
+export interface ClientInfo {
+    id: string;
+    connection: DataConnection;
+    progress: TransferProgress;
+    startTime: number;
+}
+
 export type ConnectionStatus =
     | 'idle'
     | 'connecting'
@@ -27,21 +34,29 @@ export type ConnectionStatus =
 
 export class P2PFileTransfer {
     private peer: Peer | null = null;
-    private connection: DataConnection | null = null;
+    private connections: Map<string, ClientInfo> = new Map(); // Store multiple connections
     private onStatusChange?: (status: ConnectionStatus) => void;
-    private onProgressChange?: (progress: TransferProgress) => void;
+    private onProgressChange?: (clientId: string, progress: TransferProgress) => void;
+    private onClientConnect?: (clientId: string) => void;
+    private onClientDisconnect?: (clientId: string) => void;
     private onFileReceived?: (file: File) => void;
     private onError?: (error: string) => void;
+    private overallStatus: ConnectionStatus = 'idle';
+    private pendingFile: File | null = null; // Store file for automatic sending
 
     constructor() { }
 
     // Initialize as sender (creates a new peer ID)
     async initSender(
         onStatusChange: (status: ConnectionStatus) => void,
-        onError: (error: string) => void
+        onError: (error: string) => void,
+        onClientConnect?: (clientId: string) => void,
+        onClientDisconnect?: (clientId: string) => void
     ): Promise<string> {
         this.onStatusChange = onStatusChange;
         this.onError = onError;
+        this.onClientConnect = onClientConnect;
+        this.onClientDisconnect = onClientDisconnect;
 
         return new Promise((resolve, reject) => {
             try {
@@ -59,20 +74,19 @@ export class P2PFileTransfer {
 
                 this.peer.on('open', (id) => {
                     console.log('Sender peer opened with ID:', id);
-                    this.onStatusChange?.('idle');
+                    this.updateOverallStatus('idle');
                     resolve(id);
                 });
 
                 this.peer.on('connection', (conn) => {
                     console.log('Incoming connection from:', conn.peer);
-                    this.connection = conn;
-                    this.setupConnection();
+                    this.setupConnection(conn);
                 });
 
                 this.peer.on('error', (err) => {
                     console.error('Peer error:', err);
                     this.onError?.(err.message);
-                    this.onStatusChange?.('error');
+                    this.updateOverallStatus('error');
                     reject(err);
                 });
 
@@ -91,13 +105,13 @@ export class P2PFileTransfer {
         onError: (error: string) => void
     ): Promise<void> {
         this.onStatusChange = onStatusChange;
-        this.onProgressChange = onProgressChange;
+        this.onProgressChange = (clientId, progress) => onProgressChange(progress); // Single client, ignore clientId
         this.onFileReceived = onFileReceived;
         this.onError = onError;
 
         return new Promise((resolve, reject) => {
             try {
-                this.onStatusChange?.('connecting');
+                this.updateOverallStatus('connecting');
 
                 // Create a temporary peer
                 this.peer = new Peer({
@@ -113,19 +127,19 @@ export class P2PFileTransfer {
                     console.log('Receiver peer opened, connecting to:', roomId);
 
                     // Connect to the sender
-                    this.connection = this.peer!.connect(roomId, {
+                    const conn = this.peer!.connect(roomId, {
                         reliable: true,
                         serialization: 'binary'
                     });
 
-                    this.setupConnection();
+                    this.setupConnection(conn);
                     resolve();
                 });
 
                 this.peer.on('error', (err) => {
                     console.error('Peer error:', err);
                     this.onError?.(err.message);
-                    this.onStatusChange?.('error');
+                    this.updateOverallStatus('error');
                     reject(err);
                 });
 
@@ -135,36 +149,71 @@ export class P2PFileTransfer {
         });
     }
 
-    private setupConnection() {
-        if (!this.connection) return;
-
-        this.connection.on('open', () => {
-            console.log('Data connection opened');
-            this.onStatusChange?.('connected');
+    private setupConnection(conn: DataConnection) {
+        conn.on('open', () => {
+            console.log('Data connection opened with:', conn.peer);
+            
+            // For sender, add client to connections map
+            if (this.connections !== undefined) {
+                const clientInfo: ClientInfo = {
+                    id: conn.peer,
+                    connection: conn,
+                    progress: {
+                        transferred: 0,
+                        total: 0,
+                        percentage: 0,
+                        speed: 0
+                    },
+                    startTime: Date.now()
+                };
+                
+                this.connections.set(conn.peer, clientInfo);
+                this.onClientConnect?.(conn.peer);
+            }
+            
+            // Only update status to connected if we're not already transferring
+            if (this.overallStatus !== 'transferring' && this.overallStatus !== 'completed') {
+                this.updateOverallStatus('connected');
+            }
         });
 
-        this.connection.on('data', (data) => {
+        conn.on('data', (data) => {
             this.handleIncomingData(data);
         });
 
-        this.connection.on('error', (err) => {
-            console.error('Connection error:', err);
+        conn.on('error', (err) => {
+            console.error('Connection error with', conn.peer, ':', err);
+            this.connections.delete(conn.peer);
+            this.onClientDisconnect?.(conn.peer);
             this.onError?.(err.message);
-            this.onStatusChange?.('error');
+            
+            // Update status if no connections left
+            if (this.connections.size === 0 && this.overallStatus !== 'completed') {
+                this.updateOverallStatus('error');
+            }
         });
 
-        this.connection.on('close', () => {
-            console.log('Connection closed');
+        conn.on('close', () => {
+            console.log('Connection closed with:', conn.peer);
+            this.connections.delete(conn.peer);
+            this.onClientDisconnect?.(conn.peer);
+            
+            // Update status if no connections left
+            if (this.connections.size === 0 && this.overallStatus !== 'completed') {
+                this.updateOverallStatus('idle');
+            }
         });
     }
 
-    // Send file through P2P connection
+    // Send file through P2P connection to all connected clients
     async sendFile(file: File): Promise<void> {
-        if (!this.connection || this.connection.open === false) {
-            throw new Error('No active connection');
+        if (this.connections.size === 0) {
+            // Store file for when clients connect
+            this.pendingFile = file;
+            throw new Error('No active connections. File will be sent when clients connect.');
         }
 
-        this.onStatusChange?.('transferring');
+        this.updateOverallStatus('transferring');
 
         const metadata: FileMetadata = {
             name: file.name,
@@ -173,10 +222,21 @@ export class P2PFileTransfer {
             totalChunks: Math.ceil(file.size / CHUNK_SIZE)
         };
 
-        // Send metadata first
-        this.connection.send({
-            type: 'metadata',
-            data: metadata
+        // Send metadata to all clients first
+        this.connections.forEach(client => {
+            client.connection.send({
+                type: 'metadata',
+                data: metadata
+            });
+            
+            // Reset progress for this client
+            client.progress = {
+                transferred: 0,
+                total: file.size,
+                percentage: 0,
+                speed: 0
+            };
+            client.startTime = Date.now();
         });
 
         // Wait a bit for metadata to be processed
@@ -185,40 +245,56 @@ export class P2PFileTransfer {
         // Send file in chunks
         let offset = 0;
         let chunkIndex = 0;
-        const startTime = Date.now();
 
         while (offset < file.size) {
             const chunk = file.slice(offset, offset + CHUNK_SIZE);
             const arrayBuffer = await chunk.arrayBuffer();
 
-            this.connection.send({
-                type: 'chunk',
-                index: chunkIndex,
-                data: arrayBuffer
+            // Send chunk to all connected clients
+            this.connections.forEach(client => {
+                // Only send if connection is still open
+                if (client.connection.open) {
+                    client.connection.send({
+                        type: 'chunk',
+                        index: chunkIndex,
+                        data: arrayBuffer
+                    });
+                }
             });
 
             offset += CHUNK_SIZE;
             chunkIndex++;
 
-            // Calculate progress
-            const transferred = Math.min(offset, file.size);
-            const elapsed = (Date.now() - startTime) / 1000;
-            const speed = elapsed > 0 ? transferred / elapsed : 0;
-
-            this.onProgressChange?.({
-                transferred,
-                total: file.size,
-                percentage: (transferred / file.size) * 100,
-                speed
+            // Update progress for each client
+            this.connections.forEach(client => {
+                if (client.connection.open) {
+                    client.progress.transferred = Math.min(offset, file.size);
+                    const elapsed = (Date.now() - client.startTime) / 1000;
+                    client.progress.speed = elapsed > 0 ? client.progress.transferred / elapsed : 0;
+                    client.progress.percentage = (client.progress.transferred / file.size) * 100;
+                    
+                    this.onProgressChange?.(client.id, client.progress);
+                }
             });
 
             // Small delay to prevent overwhelming the connection
-            await new Promise(resolve => setTimeout(resolve, 10));
+            await new Promise(resolve => setTimeout(resolve, 5));
         }
 
-        // Send completion signal
-        this.connection.send({ type: 'complete' });
-        this.onStatusChange?.('completed');
+        // Send completion signal to all clients
+        this.connections.forEach(client => {
+            if (client.connection.open) {
+                client.connection.send({ type: 'complete' });
+            }
+        });
+        
+        this.updateOverallStatus('completed');
+        this.pendingFile = null; // Clear pending file
+    }
+
+    // Get list of connected clients
+    getConnectedClients(): ClientInfo[] {
+        return Array.from(this.connections.values());
     }
 
     // Receiving file data
@@ -234,23 +310,26 @@ export class P2PFileTransfer {
             this.receivedChunks = [];
             this.receivedChunkCount = 0;
             this.receiveStartTime = Date.now();
-            this.onStatusChange?.('transferring');
+            this.updateOverallStatus('transferring');
         }
         else if (data.type === 'chunk') {
             this.receivedChunks[data.index] = data.data;
             this.receivedChunkCount++;
 
-            if (this.fileMetadata) {
+            if (this.fileMetadata && this.onProgressChange) {
                 const transferred = this.receivedChunkCount * CHUNK_SIZE;
                 const elapsed = (Date.now() - this.receiveStartTime) / 1000;
                 const speed = elapsed > 0 ? transferred / elapsed : 0;
 
-                this.onProgressChange?.({
+                const progress: TransferProgress = {
                     transferred: Math.min(transferred, this.fileMetadata.size),
                     total: this.fileMetadata.size,
                     percentage: (this.receivedChunkCount / this.fileMetadata.totalChunks) * 100,
                     speed
-                });
+                };
+
+                // For receiver, we don't have a client ID, so we pass an empty string
+                this.onProgressChange('', progress);
             }
         }
         else if (data.type === 'complete') {
@@ -269,7 +348,7 @@ export class P2PFileTransfer {
         });
 
         this.onFileReceived?.(file);
-        this.onStatusChange?.('completed');
+        this.updateOverallStatus('completed');
 
         // Clear received data
         this.receivedChunks = [];
@@ -287,12 +366,20 @@ export class P2PFileTransfer {
         return result;
     }
 
+    // Update overall status and notify
+    private updateOverallStatus(status: ConnectionStatus) {
+        this.overallStatus = status;
+        this.onStatusChange?.(status);
+    }
+
     // Clean up connections
     destroy() {
-        if (this.connection) {
-            this.connection.close();
-            this.connection = null;
-        }
+        this.connections.forEach(client => {
+            client.connection.close();
+        });
+        this.connections.clear();
+        this.pendingFile = null;
+        
         if (this.peer) {
             this.peer.destroy();
             this.peer = null;
