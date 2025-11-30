@@ -311,7 +311,7 @@ export default function Home() {
               )}
 
               {/* Share Options */}
-              {roomId && qrCodeUrl && status !== 'completed' && (
+              {roomId && qrCodeUrl && (
                 <div className="space-y-4">
                   <div className="text-center">
                     <h3 className="text-xl font-semibold mb-4">Share this QR code or link</h3>
@@ -352,23 +352,10 @@ export default function Home() {
 
               {/* Completed Message */}
               {status === 'completed' && (
-                <div className="bg-green-500/10 border border-green-500/50 rounded-xl p-6 text-center">
-                  <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
-                  <h3 className="text-2xl font-semibold mb-2">Transfer Complete!</h3>
-                  <p className="text-gray-400 mb-4">Your file has been successfully sent</p>
-                  <button
-                    onClick={() => {
-                      setFile(null);
-                      setRoomId('');
-                      setQrCodeUrl('');
-                      setStatus('idle');
-                      setProgress(null);
-                      p2pRef.current?.destroy();
-                    }}
-                    className="btn-primary"
-                  >
-                    Send Another File
-                  </button>
+                <div className="bg-green-500/10 border border-green-500/50 rounded-xl p-4 text-center">
+                  <CheckCircle className="w-8 h-8 text-green-400 mx-auto mb-2" />
+                  <h3 className="text-lg font-semibold">Transfer Complete!</h3>
+                  <p className="text-gray-400 text-sm">Your file has been successfully sent. QR code is still active for more transfers.</p>
                 </div>
               )}
             </div>
