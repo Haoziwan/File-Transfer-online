@@ -97,7 +97,7 @@ export class P2PFileTransfer {
 
         return new Promise((resolve, reject) => {
             try {
-                this.onStatusChange('connecting');
+                this.onStatusChange?.('connecting');
 
                 // Create a temporary peer
                 this.peer = new Peer({
