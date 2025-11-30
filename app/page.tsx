@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { P2PFileTransfer, ConnectionStatus, TransferProgress, ClientInfo, formatBytes, formatSpeed } from '@/lib/p2p';
 import QRCode from 'qrcode';
-import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check, Users, ArrowLeftRight } from 'lucide-react';
+import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check, Users, ArrowLeftRight, Github } from 'lucide-react';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -276,6 +276,17 @@ export default function Home() {
       <div className="max-w-2xl w-full">
         {/* Header */}
         <div className="text-center mb-8 animate-fadeIn">
+          <div className="flex justify-center mb-4">
+            <a 
+              href="https://github.com/Haoziwan/File-Transfer-online" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-gray-400 hover:text-white transition-colors duration-200"
+              aria-label="View on GitHub"
+            >
+              <Github className="w-8 h-8" />
+            </a>
+          </div>
           <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-blue-400 bg-clip-text text-transparent">
             P2P File Transfer
           </h1>
