@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { P2PFileTransfer, ConnectionStatus, TransferProgress, ClientInfo, formatBytes, formatSpeed } from '@/lib/p2p';
 import QRCode from 'qrcode';
-import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check, Users } from 'lucide-react';
+import { Upload, Share2, CheckCircle, XCircle, Loader2, X, Copy, Check, Users, ArrowLeftRight } from 'lucide-react';
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -99,7 +99,7 @@ export default function Home() {
           // New client connected
           console.log('Client connected:', clientId);
           updateConnectedClients();
-          
+
           // Automatically start transfer if we have a file
           if (selectedFile) {
             setTimeout(() => {
@@ -139,7 +139,7 @@ export default function Home() {
     if (p2pRef.current) {
       const clients = p2pRef.current.getConnectedClients();
       setConnectedClients(clients);
-      
+
       // Update progress map
       const newProgressMap = new Map<string, TransferProgress>();
       clients.forEach(client => {
@@ -151,7 +151,7 @@ export default function Home() {
 
   const sendFileToClients = async (fileToSend: File) => {
     if (!p2pRef.current || !fileToSend) return;
-    
+
     try {
       // Set up progress handler
       p2pRef.current['onProgressChange'] = (clientId, progress) => {
@@ -160,13 +160,13 @@ export default function Home() {
           newMap.set(clientId, progress);
           return newMap;
         });
-        
+
         // Update overall progress (average of all clients)
         const allProgress = Array.from(clientProgress.values());
         if (allProgress.length > 0) {
           const totalPercentage = allProgress.reduce((sum, p) => sum + p.percentage, 0);
           const avgPercentage = totalPercentage / allProgress.length;
-          
+
           setProgress({
             transferred: Math.max(...allProgress.map(p => p.transferred)),
             total: allProgress[0]?.total || 0,
@@ -175,7 +175,7 @@ export default function Home() {
           });
         }
       };
-      
+
       await p2pRef.current.sendFile(fileToSend);
     } catch (err: any) {
       setError('Failed to send file: ' + err.message);
@@ -252,8 +252,8 @@ export default function Home() {
           <div className="flex items-center gap-2 text-green-400">
             <CheckCircle className="w-4 h-4" />
             <span>
-              {connectedClients.length > 0 
-                ? `${connectedClients.length} client${connectedClients.length > 1 ? 's' : ''} connected` 
+              {connectedClients.length > 0
+                ? `${connectedClients.length} client${connectedClients.length > 1 ? 's' : ''} connected`
                 : 'Connected! Waiting for receivers...'}
             </span>
           </div>
@@ -295,6 +295,15 @@ export default function Home() {
           <p className="text-gray-400 text-lg">
             Secure, direct file sharing through your browser
           </p>
+          <div className="mt-4">
+            <a 
+              href="/connect" 
+              className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-lg"
+            >
+              <ArrowLeftRight className="w-5 h-5" />
+              Bidirectional Connection
+            </a>
+          </div>
         </div>
 
         {/* Main Card */}
@@ -457,7 +466,7 @@ export default function Home() {
                   <CheckCircle className="w-8 h-8 text-green-400 mx-auto mb-2" />
                   <h3 className="text-lg font-semibold">Transfer Complete!</h3>
                   <p className="text-gray-400 text-sm">
-                    Your file has been successfully sent to all connected clients. 
+                    Your file has been successfully sent to all connected clients.
                     QR code is still active for more transfers.
                   </p>
                 </div>

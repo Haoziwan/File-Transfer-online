@@ -152,7 +152,7 @@ export class P2PFileTransfer {
     private setupConnection(conn: DataConnection) {
         conn.on('open', () => {
             console.log('Data connection opened with:', conn.peer);
-            
+
             // For sender, add client to connections map
             if (this.connections !== undefined) {
                 const clientInfo: ClientInfo = {
@@ -166,11 +166,11 @@ export class P2PFileTransfer {
                     },
                     startTime: Date.now()
                 };
-                
+
                 this.connections.set(conn.peer, clientInfo);
                 this.onClientConnect?.(conn.peer);
             }
-            
+
             // Only update status to connected if we're not already transferring
             if (this.overallStatus !== 'transferring' && this.overallStatus !== 'completed') {
                 this.updateOverallStatus('connected');
@@ -186,7 +186,7 @@ export class P2PFileTransfer {
             this.connections.delete(conn.peer);
             this.onClientDisconnect?.(conn.peer);
             this.onError?.(err.message);
-            
+
             // Update status if no connections left
             if (this.connections.size === 0 && this.overallStatus !== 'completed') {
                 this.updateOverallStatus('error');
@@ -197,7 +197,7 @@ export class P2PFileTransfer {
             console.log('Connection closed with:', conn.peer);
             this.connections.delete(conn.peer);
             this.onClientDisconnect?.(conn.peer);
-            
+
             // Update status if no connections left
             if (this.connections.size === 0 && this.overallStatus !== 'completed') {
                 this.updateOverallStatus('idle');
@@ -228,7 +228,7 @@ export class P2PFileTransfer {
                 type: 'metadata',
                 data: metadata
             });
-            
+
             // Reset progress for this client
             client.progress = {
                 transferred: 0,
@@ -272,7 +272,7 @@ export class P2PFileTransfer {
                     const elapsed = (Date.now() - client.startTime) / 1000;
                     client.progress.speed = elapsed > 0 ? client.progress.transferred / elapsed : 0;
                     client.progress.percentage = (client.progress.transferred / file.size) * 100;
-                    
+
                     this.onProgressChange?.(client.id, client.progress);
                 }
             });
@@ -287,7 +287,7 @@ export class P2PFileTransfer {
                 client.connection.send({ type: 'complete' });
             }
         });
-        
+
         this.updateOverallStatus('completed');
         this.pendingFile = null; // Clear pending file
     }
@@ -379,7 +379,7 @@ export class P2PFileTransfer {
         });
         this.connections.clear();
         this.pendingFile = null;
-        
+
         if (this.peer) {
             this.peer.destroy();
             this.peer = null;
