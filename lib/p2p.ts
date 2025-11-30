@@ -205,12 +205,20 @@ export class P2PFileTransfer {
         });
     }
 
-    // Send file through P2P connection to all connected clients
-    async sendFile(file: File): Promise<void> {
-        if (this.connections.size === 0) {
-            // Store file for when clients connect
-            this.pendingFile = file;
-            throw new Error('No active connections. File will be sent when clients connect.');
+    // Send file through P2P connection to connected clients
+    async sendFile(file: File, targetClientIds?: string[]): Promise<void> {
+        // Determine target clients
+        const targets = targetClientIds
+            ? targetClientIds.map(id => this.connections.get(id)).filter((c): c is ClientInfo => c !== undefined)
+            : Array.from(this.connections.values());
+
+        if (targets.length === 0) {
+            if (!targetClientIds) {
+                // Only store as pending if we were trying to broadcast to everyone and no one was there
+                this.pendingFile = file;
+                throw new Error('No active connections. File will be sent when clients connect.');
+            }
+            return;
         }
 
         this.updateOverallStatus('transferring');
@@ -222,21 +230,23 @@ export class P2PFileTransfer {
             totalChunks: Math.ceil(file.size / CHUNK_SIZE)
         };
 
-        // Send metadata to all clients first
-        this.connections.forEach(client => {
-            client.connection.send({
-                type: 'metadata',
-                data: metadata
-            });
+        // Send metadata to targets
+        targets.forEach(client => {
+            if (client.connection.open) {
+                client.connection.send({
+                    type: 'metadata',
+                    data: metadata
+                });
 
-            // Reset progress for this client
-            client.progress = {
-                transferred: 0,
-                total: file.size,
-                percentage: 0,
-                speed: 0
-            };
-            client.startTime = Date.now();
+                // Reset progress for this client
+                client.progress = {
+                    transferred: 0,
+                    total: file.size,
+                    percentage: 0,
+                    speed: 0
+                };
+                client.startTime = Date.now();
+            }
         });
 
         // Wait a bit for metadata to be processed
@@ -250,8 +260,8 @@ export class P2PFileTransfer {
             const chunk = file.slice(offset, offset + CHUNK_SIZE);
             const arrayBuffer = await chunk.arrayBuffer();
 
-            // Send chunk to all connected clients
-            this.connections.forEach(client => {
+            // Send chunk to targets
+            targets.forEach(client => {
                 // Only send if connection is still open
                 if (client.connection.open) {
                     client.connection.send({
@@ -265,8 +275,8 @@ export class P2PFileTransfer {
             offset += CHUNK_SIZE;
             chunkIndex++;
 
-            // Update progress for each client
-            this.connections.forEach(client => {
+            // Update progress for targets
+            targets.forEach(client => {
                 if (client.connection.open) {
                     client.progress.transferred = Math.min(offset, file.size);
                     const elapsed = (Date.now() - client.startTime) / 1000;
@@ -281,15 +291,18 @@ export class P2PFileTransfer {
             await new Promise(resolve => setTimeout(resolve, 5));
         }
 
-        // Send completion signal to all clients
-        this.connections.forEach(client => {
+        // Send completion signal to targets
+        targets.forEach(client => {
             if (client.connection.open) {
                 client.connection.send({ type: 'complete' });
             }
         });
 
         this.updateOverallStatus('completed');
-        this.pendingFile = null; // Clear pending file
+
+        if (!targetClientIds) {
+            this.pendingFile = null; // Clear pending file only if it was a broadcast
+        }
     }
 
     // Get list of connected clients

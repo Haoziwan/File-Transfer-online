@@ -103,7 +103,8 @@ export default function Home() {
           // Automatically start transfer if we have a file
           if (selectedFile) {
             setTimeout(() => {
-              sendFileToClients(selectedFile);
+              // Only send to the new client
+              sendFileToClients(selectedFile, [clientId]);
             }, 500); // Small delay to ensure connection is fully established
           }
         },
@@ -149,7 +150,7 @@ export default function Home() {
     }
   };
 
-  const sendFileToClients = async (fileToSend: File) => {
+  const sendFileToClients = async (fileToSend: File, targetClientIds?: string[]) => {
     if (!p2pRef.current || !fileToSend) return;
 
     try {
@@ -160,23 +161,9 @@ export default function Home() {
           newMap.set(clientId, progress);
           return newMap;
         });
-
-        // Update overall progress (average of all clients)
-        const allProgress = Array.from(clientProgress.values());
-        if (allProgress.length > 0) {
-          const totalPercentage = allProgress.reduce((sum, p) => sum + p.percentage, 0);
-          const avgPercentage = totalPercentage / allProgress.length;
-
-          setProgress({
-            transferred: Math.max(...allProgress.map(p => p.transferred)),
-            total: allProgress[0]?.total || 0,
-            percentage: avgPercentage,
-            speed: allProgress.reduce((sum, p) => sum + p.speed, 0)
-          });
-        }
       };
 
-      await p2pRef.current.sendFile(fileToSend);
+      await p2pRef.current.sendFile(fileToSend, targetClientIds);
     } catch (err: any) {
       setError('Failed to send file: ' + err.message);
       showToast('Failed to send file', 'error');
@@ -296,8 +283,8 @@ export default function Home() {
             Secure, direct file sharing through your browser
           </p>
           <div className="mt-4">
-            <a 
-              href="/connect" 
+            <a
+              href="/connect"
               className="btn-primary inline-flex items-center gap-2 px-6 py-3 text-lg"
             >
               <ArrowLeftRight className="w-5 h-5" />
@@ -386,26 +373,6 @@ export default function Home() {
                         )}
                       </div>
                     ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Progress */}
-              {progress && (
-                <div className="glass rounded-xl p-4 space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span>Overall Progress</span>
-                    <span className="font-semibold">{progress.percentage.toFixed(1)}%</span>
-                  </div>
-                  <div className="progress-bar">
-                    <div
-                      className="progress-fill"
-                      style={{ width: `${progress.percentage}%` }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-sm text-gray-400">
-                    <span>{formatBytes(progress.transferred)} / {formatBytes(progress.total)}</span>
-                    <span>{formatSpeed(progress.speed)}</span>
                   </div>
                 </div>
               )}
