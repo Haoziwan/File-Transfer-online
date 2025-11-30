@@ -66,7 +66,8 @@ export class P2PFileTransfer {
                 this.peer = new Peer(peerId, {
                     config: {
                         iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun.miwifi.com:3478' },
+                            { urls: 'stun:stun.qq.com:3478' },
                             { urls: 'stun:global.stun.twilio.com:3478' }
                         ]
                     }
@@ -117,7 +118,8 @@ export class P2PFileTransfer {
                 this.peer = new Peer({
                     config: {
                         iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' },
+                            { urls: 'stun:stun.miwifi.com:3478' },
+                            { urls: 'stun:stun.qq.com:3478' },
                             { urls: 'stun:global.stun.twilio.com:3478' }
                         ]
                     }
