@@ -22,6 +22,7 @@ export interface ClientInfo {
     connection: DataConnection;
     progress: TransferProgress;
     startTime: number;
+    completionResolve?: () => void;
 }
 
 export type ConnectionStatus =
@@ -180,7 +181,7 @@ export class P2PFileTransfer {
         });
 
         conn.on('data', (data) => {
-            this.handleIncomingData(data);
+            this.handleIncomingData(data, conn.peer);
         });
 
         conn.on('error', (err) => {
@@ -259,6 +260,13 @@ export class P2PFileTransfer {
         let chunkIndex = 0;
         const MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024; // 16MB limit
 
+        // Create completion promises for all targets
+        const completionPromises = targets.map(client => {
+            return new Promise<void>(resolve => {
+                client.completionResolve = resolve;
+            });
+        });
+
         while (offset < file.size) {
             // Check backpressure
             let canSend = true;
@@ -295,18 +303,6 @@ export class P2PFileTransfer {
 
             offset += CHUNK_SIZE;
             chunkIndex++;
-
-            // Update progress for targets
-            targets.forEach(client => {
-                if (client.connection.open) {
-                    client.progress.transferred = Math.min(offset, file.size);
-                    const elapsed = (Date.now() - client.startTime) / 1000;
-                    client.progress.speed = elapsed > 0 ? client.progress.transferred / elapsed : 0;
-                    client.progress.percentage = (client.progress.transferred / file.size) * 100;
-
-                    this.onProgressChange?.(client.id, client.progress);
-                }
-            });
         }
 
         // Send completion signal to targets
@@ -315,6 +311,9 @@ export class P2PFileTransfer {
                 client.connection.send({ type: 'complete' });
             }
         });
+
+        // Wait for all clients to acknowledge completion
+        await Promise.all(completionPromises);
 
         this.updateOverallStatus('completed');
 
@@ -334,7 +333,7 @@ export class P2PFileTransfer {
     private receivedChunkCount = 0;
     private receiveStartTime = 0;
 
-    private handleIncomingData(data: any) {
+    private handleIncomingData(data: any, peerId: string) {
         if (data.type === 'metadata') {
             console.log('Received file metadata:', data.data);
             this.fileMetadata = data.data;
@@ -361,11 +360,53 @@ export class P2PFileTransfer {
 
                 // For receiver, we don't have a client ID, so we pass an empty string
                 this.onProgressChange('', progress);
+
+                // Send ACK to sender every 10 chunks
+                if (this.receivedChunkCount % 10 === 0) {
+                    const sender = this.connections.get(peerId);
+                    if (sender && sender.connection.open) {
+                        sender.connection.send({
+                            type: 'progress_ack',
+                            transferred: progress.transferred
+                        });
+                    }
+                }
             }
         }
         else if (data.type === 'complete') {
             console.log('File transfer complete');
             this.assembleFile();
+
+            // Send completion ACK
+            const sender = this.connections.get(peerId);
+            if (sender && sender.connection.open) {
+                sender.connection.send({ type: 'transfer_complete_ack' });
+            }
+        }
+        else if (data.type === 'progress_ack') {
+            // Handle progress ACK from receiver
+            const client = this.connections.get(peerId);
+            if (client) {
+                client.progress.transferred = data.transferred;
+                const elapsed = (Date.now() - client.startTime) / 1000;
+                client.progress.speed = elapsed > 0 ? client.progress.transferred / elapsed : 0;
+                // Recalculate percentage based on total size (which we know)
+                client.progress.percentage = (client.progress.transferred / client.progress.total) * 100;
+
+                this.onProgressChange?.(client.id, client.progress);
+            }
+        }
+        else if (data.type === 'transfer_complete_ack') {
+            // Handle completion ACK from receiver
+            const client = this.connections.get(peerId);
+            if (client && client.completionResolve) {
+                // Ensure progress is 100%
+                client.progress.transferred = client.progress.total;
+                client.progress.percentage = 100;
+                this.onProgressChange?.(client.id, client.progress);
+
+                client.completionResolve();
+            }
         }
     }
 
