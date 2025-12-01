@@ -20,6 +20,7 @@ export default function Home() {
 
   const p2pRef = useRef<P2PFileTransfer | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<File | null>(null);
 
   useEffect(() => {
     return () => {
@@ -29,6 +30,11 @@ export default function Home() {
       }
     };
   }, []);
+
+  // Update file ref when file changes
+  useEffect(() => {
+    fileRef.current = file;
+  }, [file]);
 
   // Toast auto-hide
   useEffect(() => {
@@ -44,12 +50,33 @@ export default function Home() {
 
   const handleFileSelect = (selectedFile: File) => {
     setFile(selectedFile);
+    fileRef.current = selectedFile;
     setError('');
-    setStatus('idle');
-    setProgress(null);
-    setClientProgress(new Map());
-    setConnectedClients([]);
-    initializeSender(selectedFile);
+
+    // If we already have an active P2P session, reuse it
+    if (p2pRef.current) {
+      const clients = p2pRef.current.getConnectedClients();
+      if (clients.length > 0) {
+        // We have connected clients, send the new file immediately
+        setProgress(null);
+        setClientProgress(new Map());
+        setStatus('transferring');
+        sendFileToClients(selectedFile);
+        showToast('Sending new file to connected clients');
+      } else {
+        // No clients yet, just update the file
+        // Status remains 'idle' (waiting for receivers)
+        setStatus('idle');
+        showToast('File updated, waiting for receivers');
+      }
+    } else {
+      // No active session, initialize new one
+      setStatus('idle');
+      setProgress(null);
+      setClientProgress(new Map());
+      setConnectedClients([]);
+      initializeSender(selectedFile);
+    }
   };
 
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -101,10 +128,10 @@ export default function Home() {
           updateConnectedClients();
 
           // Automatically start transfer if we have a file
-          if (selectedFile) {
+          if (fileRef.current) {
             setTimeout(() => {
               // Only send to the new client
-              sendFileToClients(selectedFile, [clientId]);
+              sendFileToClients(fileRef.current!, [clientId]);
             }, 500); // Small delay to ensure connection is fully established
           }
         },
@@ -277,9 +304,9 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-8 animate-fadeIn">
           <div className="flex justify-center mb-4">
-            <a 
-              href="https://github.com/Haoziwan/File-Transfer-online" 
-              target="_blank" 
+            <a
+              href="https://github.com/Haoziwan/File-Transfer-online"
+              target="_blank"
               rel="noopener noreferrer"
               className="text-gray-400 hover:text-white transition-colors duration-200"
               aria-label="View on GitHub"
