@@ -44,6 +44,7 @@ export class P2PFileTransfer {
     private onError?: (error: string) => void;
     private overallStatus: ConnectionStatus = 'idle';
     private pendingFile: File | null = null; // Store file for automatic sending
+    private lastProgressUpdate = 0;
 
     constructor() { }
 
@@ -359,7 +360,12 @@ export class P2PFileTransfer {
                 };
 
                 // For receiver, we don't have a client ID, so we pass an empty string
-                this.onProgressChange('', progress);
+                // Throttle progress updates to max 20fps (50ms)
+                const now = Date.now();
+                if (now - this.lastProgressUpdate > 50 || this.receivedChunkCount === this.fileMetadata.totalChunks) {
+                    this.onProgressChange('', progress);
+                    this.lastProgressUpdate = now;
+                }
 
                 // Send ACK to sender every 4 chunks (approx 1MB with 256KB chunks)
                 if (this.receivedChunkCount % 4 === 0) {
