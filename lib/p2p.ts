@@ -1,7 +1,7 @@
 import Peer, { DataConnection } from 'peerjs';
 
-// File chunk size: 64KB
-const CHUNK_SIZE = 64 * 1024;
+// File chunk size: 256KB
+const CHUNK_SIZE = 256 * 1024;
 
 export interface FileMetadata {
     name: string;
@@ -282,7 +282,7 @@ export class P2PFileTransfer {
 
             if (!canSend) {
                 // Wait for buffer to drain
-                await new Promise(resolve => setTimeout(resolve, 10));
+                await new Promise(resolve => setTimeout(resolve, 5));
                 continue;
             }
 
@@ -361,8 +361,8 @@ export class P2PFileTransfer {
                 // For receiver, we don't have a client ID, so we pass an empty string
                 this.onProgressChange('', progress);
 
-                // Send ACK to sender every 10 chunks
-                if (this.receivedChunkCount % 10 === 0) {
+                // Send ACK to sender every 4 chunks (approx 1MB with 256KB chunks)
+                if (this.receivedChunkCount % 4 === 0) {
                     const sender = this.connections.get(peerId);
                     if (sender && sender.connection.open) {
                         sender.connection.send({
