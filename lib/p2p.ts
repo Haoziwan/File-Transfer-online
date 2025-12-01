@@ -1,7 +1,7 @@
 import Peer, { DataConnection } from 'peerjs';
 
-// File chunk size: 16KB
-const CHUNK_SIZE = 16 * 1024;
+// File chunk size: 64KB
+const CHUNK_SIZE = 64 * 1024;
 
 export interface FileMetadata {
     name: string;
@@ -257,8 +257,27 @@ export class P2PFileTransfer {
         // Send file in chunks
         let offset = 0;
         let chunkIndex = 0;
+        const MAX_BUFFERED_AMOUNT = 16 * 1024 * 1024; // 16MB limit
 
         while (offset < file.size) {
+            // Check backpressure
+            let canSend = true;
+            for (const client of targets) {
+                if (!client.connection.open) continue;
+                // Access underlying RTCDataChannel to check buffer
+                const dc = (client.connection as any).dataChannel as RTCDataChannel;
+                if (dc && dc.bufferedAmount > MAX_BUFFERED_AMOUNT) {
+                    canSend = false;
+                    break;
+                }
+            }
+
+            if (!canSend) {
+                // Wait for buffer to drain
+                await new Promise(resolve => setTimeout(resolve, 10));
+                continue;
+            }
+
             const chunk = file.slice(offset, offset + CHUNK_SIZE);
             const arrayBuffer = await chunk.arrayBuffer();
 
@@ -288,9 +307,6 @@ export class P2PFileTransfer {
                     this.onProgressChange?.(client.id, client.progress);
                 }
             });
-
-            // Small delay to prevent overwhelming the connection
-            await new Promise(resolve => setTimeout(resolve, 5));
         }
 
         // Send completion signal to targets
